@@ -3,7 +3,11 @@ import { expect } from "chai";
 import { BigNumber } from "ethers";
 import { parseEther } from "ethers/lib/utils";
 import { ethers } from "hardhat";
-import { expectValue } from "../lib/utils/expectValue";
+import {
+  expectEvent,
+  expectRevert,
+  expectValue,
+} from "../lib/utils/expectValue";
 import { DAYS } from "../lib/utils/test/constants";
 import { timeTravel } from "../lib/utils/test/timeTravel";
 import { MockERC20, PopLocker } from "../typechain";
@@ -14,16 +18,19 @@ let stakingFund: BigNumber;
 let owner: SignerWithAddress,
   nonOwner: SignerWithAddress,
   staker: SignerWithAddress,
-  treasury: SignerWithAddress;
+  treasury: SignerWithAddress,
+  distributor: SignerWithAddress;
 
 let mockERC20Factory;
 let mockPop: MockERC20;
+let otherToken: MockERC20;
 let staking: PopLocker;
 let rewardsEscrow: RewardsEscrow;
 
 describe("PopLocker", function () {
   beforeEach(async function () {
-    [owner, nonOwner, staker, treasury] = await ethers.getSigners();
+    [owner, nonOwner, staker, treasury, distributor] =
+      await ethers.getSigners();
     mockERC20Factory = await ethers.getContractFactory("MockERC20");
     mockPop = (await mockERC20Factory.deploy(
       "TestPOP",
@@ -32,6 +39,12 @@ describe("PopLocker", function () {
     )) as MockERC20;
     await mockPop.mint(owner.address, parseEther("1000000"));
     await mockPop.mint(nonOwner.address, parseEther("10"));
+
+    otherToken = (await mockERC20Factory.deploy(
+      "TestOtherToken",
+      "TOTHER",
+      18
+    )) as MockERC20;
 
     rewardsEscrow = (await (
       await (
@@ -66,9 +79,181 @@ describe("PopLocker", function () {
     });
 
     it("adds RewardsDistributor", async function () {
+      it("reverts on zero amount", async function () {
+        await expect(staking.lock(owner.address, 0, 0)).to.be.revertedWith(
+          "Cannot stake 0"
+        );
+      });
+    });
+  });
+
+  describe("token attributes", function () {
+    it("returns token decimals", async function () {
+      await expectValue(await staking.decimals(), 18);
+    });
+
+    it("returns token name", async function () {
+      await expectValue(await staking.name(), "Vote Locked POP Token");
+    });
+
+    it("returns token symbol", async function () {
+      await expectValue(await staking.symbol(), "vlPOP");
+    });
+  });
+
+  describe("addReward", function () {
+    it("cannot add same token twice", async function () {
+      await expectRevert(
+        staking.connect(owner).addReward(mockPop.address, owner.address, true),
+        ""
+      );
+    });
+  });
+
+  describe("approveRewardDistributor", function () {
+    it("reverts on invalid rewards token", async function () {
+      await expectRevert(
+        staking
+          .connect(owner)
+          .approveRewardDistributor(
+            otherToken.address,
+            distributor.address,
+            true
+          ),
+        "rewards token does not exist"
+      );
+    });
+
+    it("approves distributor", async function () {
+      await staking
+        .connect(owner)
+        .approveRewardDistributor(mockPop.address, distributor.address, true);
       await expectValue(
-        await staking.rewardDistributors(mockPop.address, owner.address),
+        await staking.rewardDistributors(mockPop.address, distributor.address),
         true
+      );
+    });
+
+    it("denies distributor", async function () {
+      await staking
+        .connect(owner)
+        .approveRewardDistributor(mockPop.address, distributor.address, true);
+      await staking
+        .connect(owner)
+        .approveRewardDistributor(mockPop.address, distributor.address, false);
+      await expectValue(
+        await staking.rewardDistributors(mockPop.address, distributor.address),
+        false
+      );
+    });
+  });
+
+  describe("approveRewardDistributor", function () {
+    it("reverts on invalid rewards token", async function () {
+      await expectRevert(
+        staking
+          .connect(owner)
+          .approveRewardDistributor(
+            otherToken.address,
+            distributor.address,
+            true
+          ),
+        "rewards token does not exist"
+      );
+    });
+
+    it("approves distributor", async function () {
+      await staking
+        .connect(owner)
+        .approveRewardDistributor(mockPop.address, distributor.address, true);
+      await expectValue(
+        await staking.rewardDistributors(mockPop.address, distributor.address),
+        true
+      );
+    });
+
+    it("denies distributor", async function () {
+      await staking
+        .connect(owner)
+        .approveRewardDistributor(mockPop.address, distributor.address, true);
+      await staking
+        .connect(owner)
+        .approveRewardDistributor(mockPop.address, distributor.address, false);
+      await expectValue(
+        await staking.rewardDistributors(mockPop.address, distributor.address),
+        false
+      );
+    });
+  });
+
+  describe("setEscrowDuration", function () {
+    it("updates escrow duration parameter", async () => {
+      await expectValue(await staking.escrowDuration(), 365 * DAYS);
+      await staking.connect(owner).setEscrowDuration(14 * DAYS);
+      await expectValue(await staking.escrowDuration(), 14 * DAYS);
+    });
+
+    it("emits EscrowDurationUpdated", async () => {
+      await expectEvent(
+        await staking.setEscrowDuration(14 * DAYS),
+        staking,
+        "EscrowDurationUpdated",
+        [365 * DAYS, 14 * DAYS]
+      );
+    });
+
+    it("can only be called by owner", async () => {
+      await expectRevert(
+        staking.connect(nonOwner).setEscrowDuration(14 * DAYS),
+        "Ownable: caller is not the owner"
+      );
+    });
+  });
+
+  describe("setKickIncentive", function () {
+    const KICK_INCENTIVE_RATE = 100; // 1% per epoch
+    const KICK_INCENTIVE_DELAY = 4; // 4 epoch grace period
+
+    it("updates kickRewardPerEpoch", async () => {
+      await staking
+        .connect(owner)
+        .setKickIncentive(KICK_INCENTIVE_RATE, KICK_INCENTIVE_DELAY);
+      await expectValue(
+        await staking.kickRewardPerEpoch(),
+        KICK_INCENTIVE_RATE
+      );
+    });
+
+    it("updates kickRewardEpochDelay", async () => {
+      await staking
+        .connect(owner)
+        .setKickIncentive(KICK_INCENTIVE_RATE, KICK_INCENTIVE_DELAY);
+      await expectValue(
+        await staking.kickRewardEpochDelay(),
+        KICK_INCENTIVE_DELAY
+      );
+    });
+
+    it("reverts on rate >5%", async () => {
+      await expectRevert(
+        staking.connect(nonOwner).setKickIncentive(501, KICK_INCENTIVE_DELAY),
+        "Ownable: caller is not the owner"
+      );
+    });
+
+    it("reverts on delay < 2 epochs", async () => {
+      await expectRevert(
+        staking.connect(nonOwner).setKickIncentive(KICK_INCENTIVE_RATE, 1),
+        "Ownable: caller is not the owner"
+      );
+    });
+
+    it("can only be called by owner", async () => {
+      await expectRevert(
+        staking
+          .connect(nonOwner)
+          .setKickIncentive(KICK_INCENTIVE_RATE, KICK_INCENTIVE_DELAY),
+        "Ownable: caller is not the owner"
       );
     });
   });
@@ -359,11 +544,60 @@ describe("PopLocker", function () {
         await staking.connect(owner).getRewardForDuration(mockPop.address)
       ).to.equal(parseEther("9.999991732803408000"));
     });
+
     it("should transfer rewards via notifyRewardAmount", async function () {
       const stakingPopBalance = await mockPop.balanceOf(staking.address);
       await staking.notifyRewardAmount(mockPop.address, parseEther("11"));
       expect(await mockPop.balanceOf(staking.address)).to.equal(
         stakingPopBalance.add(parseEther("11"))
+      );
+    });
+  });
+
+  describe("recoverERC20", function () {
+    const OTHER_TOKEN_AMOUNT = parseEther("1000");
+
+    beforeEach(async function () {
+      await otherToken.mint(staking.address, OTHER_TOKEN_AMOUNT);
+    });
+
+    it("transfers recovered token to owner", async () => {
+      await expectValue(await otherToken.balanceOf(owner.address), 0);
+      await staking
+        .connect(owner)
+        .recoverERC20(otherToken.address, OTHER_TOKEN_AMOUNT);
+      await expectValue(
+        await otherToken.balanceOf(owner.address),
+        OTHER_TOKEN_AMOUNT
+      );
+    });
+
+    it("emits Recovered", async () => {
+      await expectEvent(
+        await staking
+          .connect(owner)
+          .recoverERC20(otherToken.address, OTHER_TOKEN_AMOUNT),
+        staking,
+        "Recovered",
+        [otherToken.address, OTHER_TOKEN_AMOUNT]
+      );
+    });
+
+    it("cannot withdraw staking token", async () => {
+      await expectRevert(
+        staking
+          .connect(owner)
+          .recoverERC20(mockPop.address, OTHER_TOKEN_AMOUNT),
+        "Cannot withdraw staking token"
+      );
+    });
+
+    it("non-owner cannot withdraw", async () => {
+      await expectRevert(
+        staking
+          .connect(nonOwner)
+          .recoverERC20(mockPop.address, OTHER_TOKEN_AMOUNT),
+        "Ownable: caller is not the owner"
       );
     });
   });

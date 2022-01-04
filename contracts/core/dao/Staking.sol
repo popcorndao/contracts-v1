@@ -34,6 +34,7 @@ contract Staking is IStakingRewards, Ownable, ReentrancyGuard, Pausable {
 
   mapping(address => uint256) public userRewardPerTokenPaid;
   mapping(address => uint256) public rewards;
+  mapping(address => bool) public rewardDistributors;
 
   uint256 private _totalSupply;
   mapping(address => uint256) private _balances;
@@ -48,6 +49,7 @@ contract Staking is IStakingRewards, Ownable, ReentrancyGuard, Pausable {
     rewardsToken = _rewardsToken;
     stakingToken = _stakingToken;
     rewardsEscrow = _rewardsEscrow;
+    rewardDistributors[msg.sender] = true;
 
     _rewardsToken.safeIncreaseAllowance(address(_rewardsEscrow), type(uint256).max);
   }
@@ -128,7 +130,9 @@ contract Staking is IStakingRewards, Ownable, ReentrancyGuard, Pausable {
     escrowDuration = duration;
   }
 
-  function notifyRewardAmount(uint256 reward) external override onlyOwner updateReward(address(0)) {
+  function notifyRewardAmount(uint256 reward) external override updateReward(address(0)) {
+    require(rewardDistributors[msg.sender], "not authorized");
+
     if (block.timestamp >= periodFinish) {
       rewardRate = reward.div(rewardsDuration);
     } else {
@@ -136,6 +140,10 @@ contract Staking is IStakingRewards, Ownable, ReentrancyGuard, Pausable {
       uint256 leftover = remaining.mul(rewardRate);
       rewardRate = reward.add(leftover).div(rewardsDuration);
     }
+
+    // handle the transfer of reward tokens via `transferFrom` to reduce the number
+    // of transactions required and ensure correctness of the reward amount
+    IERC20(rewardsToken).safeTransferFrom(msg.sender, address(this), reward);
 
     // Ensure the provided reward amount is not more than the balance in the contract.
     // This keeps the reward rate in the right range, preventing overflows due to
@@ -146,12 +154,20 @@ contract Staking is IStakingRewards, Ownable, ReentrancyGuard, Pausable {
 
     lastUpdateTime = block.timestamp;
     periodFinish = block.timestamp.add(rewardsDuration);
+
     emit RewardAdded(reward);
+  }
+
+  // Modify approval for an address to call notifyRewardAmount
+  function approveRewardDistributor(address _distributor, bool _approved) external onlyOwner {
+    emit RewardDistributorUpdated(_distributor, _approved);
+    rewardDistributors[_distributor] = _approved;
   }
 
   // Added to support recovering LP Rewards from other systems such as BAL to be distributed to holders
   function recoverERC20(address tokenAddress, uint256 tokenAmount) external onlyOwner {
     require(tokenAddress != address(stakingToken), "Cannot withdraw the staking token");
+    require(tokenAddress != address(rewardsToken), "Cannot withdraw the rewards token");
     IERC20(tokenAddress).safeTransfer(owner(), tokenAmount);
     emit Recovered(tokenAddress, tokenAmount);
   }
@@ -186,4 +202,5 @@ contract Staking is IStakingRewards, Ownable, ReentrancyGuard, Pausable {
   event RewardsDurationUpdated(uint256 newDuration);
   event EscrowDurationUpdated(uint256 _previousDuration, uint256 _newDuration);
   event Recovered(address token, uint256 amount);
+  event RewardDistributorUpdated(address indexed distributor, bool approved);
 }

@@ -1,13 +1,12 @@
+require('dotenv').config({ path: '.env' });
 import "@anthonymartin/hardhat-deploy";
 import "@float-capital/solidity-coverage";
 import "@nomiclabs/hardhat-ethers";
 import "@nomiclabs/hardhat-waffle";
-import "@popcorn/utils/src/envLoader";
 import "@typechain/hardhat";
 import "hardhat-contract-sizer";
 import "hardhat-gas-reporter";
 import "hardhat-secure-signer";
-import "./lib/tasks";
 
 module.exports = {
   solidity: {

@@ -3,7 +3,6 @@ import { SignerWithAddress } from "@nomiclabs/hardhat-ethers/signers";
 import { fromRpcSig } from "ethereumjs-util";
 import { BigNumber } from "ethers";
 import { ethers, getChainId } from "hardhat";
-import { MAX_UINT_256 } from "../lib/external/SetToken/utils/constants";
 import { expectRevert, expectValue } from "../lib/utils/expectValue";
 import { XPop } from "../typechain";
 
@@ -143,7 +142,7 @@ describe("XPop", () => {
       { name: "deadline", type: "uint256" },
     ];
 
-    const defaultDeadline = MAX_UINT_256;
+    const defaultDeadline = ethers.constants.MaxUint256;
 
     const getTypedData = (
       owner,
