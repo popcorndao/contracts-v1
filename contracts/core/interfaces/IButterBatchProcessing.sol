@@ -25,6 +25,8 @@ interface IButterBatchProcessing {
 
   function depositForMint(uint256 amount_, address account_) external;
 
+  function depositForRedeem(uint256 amount_) external;
+
   function claim(bytes32 batchId_, address account_) external returns (uint256);
 
   function withdrawFromBatch(
