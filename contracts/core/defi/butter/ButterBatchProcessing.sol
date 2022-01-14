@@ -121,6 +121,7 @@ contract ButterBatchProcessing is Pausable, ReentrancyGuard {
   event CurveTokenPairsUpdated(address[] yTokenAddresses, CurvePoolTokenPair[] curveTokenPairs);
   event RedemptionFeeUpdated(uint256 newRedemptionFee, address newFeeRecipient);
   event SweetheartUpdated(address sweetheart, bool isSweeheart);
+  event StakingUpdated(address beforeAddress, address afterAddress);
 
   /* ========== CONSTRUCTOR ========== */
 
@@ -172,8 +173,7 @@ contract ButterBatchProcessing is Pausable, ReentrancyGuard {
    * @param _amount Amount of 3cr3CRV to use for minting
    * @param _depositFor User that gets the shares attributed to (for use in zapper contract)
    */
-  function depositForMint(uint256 _amount, address _depositFor) external nonReentrant whenNotPaused {
-    IACLRegistry(contractRegistry.getContract(keccak256("ACLRegistry"))).requireApprovedContractOrEOA(msg.sender);
+  function depositForMint(uint256 _amount, address _depositFor) external nonReentrant whenNotPaused approvedContracts {
     require(
       IACLRegistry(contractRegistry.getContract(keccak256("ACLRegistry"))).hasRole(
         keccak256("ButterZapper"),
@@ -190,8 +190,7 @@ contract ButterBatchProcessing is Pausable, ReentrancyGuard {
    * @notice deposits funds in the current redeem batch
    * @param _amount amount of Butter to be redeemed
    */
-  function depositForRedeem(uint256 _amount) external nonReentrant whenNotPaused {
-    IACLRegistry(contractRegistry.getContract(keccak256("ACLRegistry"))).requireApprovedContractOrEOA(msg.sender);
+  function depositForRedeem(uint256 _amount) external nonReentrant whenNotPaused approvedContracts {
     require(setToken.balanceOf(msg.sender) >= _amount, "insufficient balance");
     setToken.transferFrom(msg.sender, address(this), _amount);
     _deposit(_amount, currentRedeemBatchId, msg.sender);
@@ -328,13 +327,7 @@ contract ButterBatchProcessing is Pausable, ReentrancyGuard {
    * @dev In order to get 3CRV we can implement a zap to move stables into the curve tri-pool
    * @dev handleKeeperIncentive checks if the msg.sender is a permissioned keeper and pays them a reward for calling this function (see KeeperIncentive.sol)
    */
-  function batchMint() external whenNotPaused {
-    IACLRegistry(contractRegistry.getContract(keccak256("ACLRegistry"))).requireApprovedContractOrEOA(msg.sender);
-    IKeeperIncentive(contractRegistry.getContract(keccak256("KeeperIncentive"))).handleKeeperIncentive(
-      contractName,
-      0,
-      msg.sender
-    );
+  function batchMint() external whenNotPaused keeper(0) {
     Batch storage batch = batches[currentMintBatchId];
 
     //Check if there was enough time between the last batch minting and this attempt...
@@ -452,13 +445,7 @@ contract ButterBatchProcessing is Pausable, ReentrancyGuard {
    * @dev In order to get stablecoins from 3CRV we can use a zap to redeem 3CRV for stables in the curve tri-pool
    * @dev handleKeeperIncentive checks if the msg.sender is a permissioned keeper and pays them a reward for calling this function (see KeeperIncentive.sol)
    */
-  function batchRedeem() external whenNotPaused {
-    IACLRegistry(contractRegistry.getContract(keccak256("ACLRegistry"))).requireApprovedContractOrEOA(msg.sender);
-    IKeeperIncentive(contractRegistry.getContract(keccak256("KeeperIncentive"))).handleKeeperIncentive(
-      contractName,
-      1,
-      msg.sender
-    );
+  function batchRedeem() external whenNotPaused keeper(1) {
     Batch storage batch = batches[currentRedeemBatchId];
 
     //Check if there was enough time between the last batch redemption and this attempt...
@@ -582,8 +569,7 @@ contract ButterBatchProcessing is Pausable, ReentrancyGuard {
    * @notice sets slippage for minting
    * @param _slippageAmount amount in bps (e.g. 50 = 0.5%)
    */
-  function setMintSlippage(uint256 _slippageAmount) external {
-    IACLRegistry(contractRegistry.getContract(keccak256("ACLRegistry"))).requireRole(keccak256("DAO"), msg.sender);
+  function setMintSlippage(uint256 _slippageAmount) external daoOnly {
     require(_slippageAmount <= 200, "slippage too high");
     emit MintSlippageUpdated(mintSlippage, _slippageAmount);
     mintSlippage = _slippageAmount;
@@ -593,8 +579,7 @@ contract ButterBatchProcessing is Pausable, ReentrancyGuard {
    * @notice sets slippage for redeeming
    * @param _slippageAmount amount in bps (e.g. 50 = 0.5%)
    */
-  function setRedeemSlippage(uint256 _slippageAmount) external {
-    IACLRegistry(contractRegistry.getContract(keccak256("ACLRegistry"))).requireRole(keccak256("DAO"), msg.sender);
+  function setRedeemSlippage(uint256 _slippageAmount) external daoOnly {
     require(_slippageAmount <= 200, "slippage too high");
     emit RedeemSlippageUpdated(redeemSlippage, _slippageAmount);
     redeemSlippage = _slippageAmount;
@@ -789,8 +774,8 @@ contract ButterBatchProcessing is Pausable, ReentrancyGuard {
    */
   function setCurvePoolTokenPairs(address[] memory _yTokenAddresses, CurvePoolTokenPair[] calldata _curvePoolTokenPairs)
     public
+    daoOnly
   {
-    IACLRegistry(contractRegistry.getContract(keccak256("ACLRegistry"))).requireRole(keccak256("DAO"), msg.sender);
     _setCurvePoolTokenPairs(_yTokenAddresses, _curvePoolTokenPairs);
   }
 
@@ -815,8 +800,7 @@ contract ButterBatchProcessing is Pausable, ReentrancyGuard {
    * @param _cooldown Cooldown in seconds
    * @dev The cooldown is the same for redeem and mint batches
    */
-  function setBatchCooldown(uint256 _cooldown) external {
-    IACLRegistry(contractRegistry.getContract(keccak256("ACLRegistry"))).requireRole(keccak256("DAO"), msg.sender);
+  function setBatchCooldown(uint256 _cooldown) external daoOnly {
     emit BatchCooldownUpdated(batchCooldown, _cooldown);
     batchCooldown = _cooldown;
   }
@@ -825,8 +809,7 @@ contract ButterBatchProcessing is Pausable, ReentrancyGuard {
    * @notice Changes the Threshold of 3CRV which need to be deposited to be able to mint immediately
    * @param _threshold Amount of 3CRV necessary to mint immediately
    */
-  function setMintThreshold(uint256 _threshold) external {
-    IACLRegistry(contractRegistry.getContract(keccak256("ACLRegistry"))).requireRole(keccak256("DAO"), msg.sender);
+  function setMintThreshold(uint256 _threshold) external daoOnly {
     emit MintThresholdUpdated(mintThreshold, _threshold);
     mintThreshold = _threshold;
   }
@@ -835,8 +818,7 @@ contract ButterBatchProcessing is Pausable, ReentrancyGuard {
    * @notice Changes the Threshold of Butter which need to be deposited to be able to redeem immediately
    * @param _threshold Amount of Butter necessary to mint immediately
    */
-  function setRedeemThreshold(uint256 _threshold) external {
-    IACLRegistry(contractRegistry.getContract(keccak256("ACLRegistry"))).requireRole(keccak256("DAO"), msg.sender);
+  function setRedeemThreshold(uint256 _threshold) external daoOnly {
     emit RedeemThresholdUpdated(redeemThreshold, _threshold);
     redeemThreshold = _threshold;
   }
@@ -847,8 +829,7 @@ contract ButterBatchProcessing is Pausable, ReentrancyGuard {
    * @param _recipient The recipient which receives these fees (Should be DAO treasury)
    * @dev Per default both of these values are not set. Therefore a fee has to be explicitly be set with this function
    */
-  function setRedemptionFee(uint256 _feeRate, address _recipient) external {
-    IACLRegistry(contractRegistry.getContract(keccak256("ACLRegistry"))).requireRole(keccak256("DAO"), msg.sender);
+  function setRedemptionFee(uint256 _feeRate, address _recipient) external daoOnly {
     require(_feeRate <= 100, "dont get greedy");
     redemptionFeeRate = _feeRate;
     feeRecipient = _recipient;
@@ -867,8 +848,7 @@ contract ButterBatchProcessing is Pausable, ReentrancyGuard {
    * @notice Toggles an address as Sweetheart (partner addresses that don't pay a redemption fee)
    * @param _sweetheart The address that shall become/lose their sweetheart status
    */
-  function updateSweetheart(address _sweetheart, bool _enabled) external {
-    IACLRegistry(contractRegistry.getContract(keccak256("ACLRegistry"))).requireRole(keccak256("DAO"), msg.sender);
+  function updateSweetheart(address _sweetheart, bool _enabled) external daoOnly {
     sweethearts[_sweetheart] = _enabled;
     emit SweetheartUpdated(_sweetheart, _enabled);
   }
@@ -877,8 +857,7 @@ contract ButterBatchProcessing is Pausable, ReentrancyGuard {
    * @notice Pauses the contract.
    * @dev All function with the modifer `whenNotPaused` cant be called anymore. Namly deposits and mint/redeem
    */
-  function pause() external {
-    IACLRegistry(contractRegistry.getContract(keccak256("ACLRegistry"))).requireRole(keccak256("DAO"), msg.sender);
+  function pause() external daoOnly {
     _pause();
   }
 
@@ -887,7 +866,30 @@ contract ButterBatchProcessing is Pausable, ReentrancyGuard {
    * @dev All function with the modifer `whenNotPaused` cant be called anymore. Namly deposits and mint/redeem
    */
   function unpause() external {
-    IACLRegistry(contractRegistry.getContract(keccak256("ACLRegistry"))).requireRole(keccak256("DAO"), msg.sender);
     _unpause();
+  }
+
+  function setStaking(address _staking) external daoOnly {
+    emit StakingUpdated(address(staking), _staking);
+    staking = IStaking(_staking);
+  }
+
+  modifier daoOnly() {
+    IACLRegistry(contractRegistry.getContract(keccak256("ACLRegistry"))).requireRole(keccak256("DAO"), msg.sender);
+    _;
+  }
+
+  modifier keeper(uint8 _index) {
+    IKeeperIncentive(contractRegistry.getContract(keccak256("KeeperIncentive"))).handleKeeperIncentive(
+      contractName,
+      _index,
+      msg.sender
+    );
+    _;
+  }
+
+  modifier approvedContracts() {
+    IACLRegistry(contractRegistry.getContract(keccak256("ACLRegistry"))).requireApprovedContractOrEOA(msg.sender);
+    _;
   }
 }
