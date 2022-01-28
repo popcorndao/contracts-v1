@@ -119,8 +119,6 @@ contract PopLocker is ReentrancyGuard, Ownable {
 
     uint256 currentEpoch = block.timestamp.div(rewardsDuration).mul(rewardsDuration);
     epochs.push(Epoch({supply: 0, date: uint32(currentEpoch)}));
-
-    IERC20(_stakingToken).safeIncreaseAllowance(address(rewardsEscrow), uint256(-1));
   }
 
   function decimals() public view returns (uint8) {
@@ -191,6 +189,12 @@ contract PopLocker is ReentrancyGuard, Ownable {
   //shutdown the contract.
   function shutdown() external onlyOwner {
     isShutdown = true;
+  }
+
+  //set approvals for rewards escrow
+  function setApprovals() external {
+    IERC20(stakingToken).safeApprove(address(rewardsEscrow), 0);
+    IERC20(stakingToken).safeApprove(address(rewardsEscrow), uint256(-1));
   }
 
   /* ========== VIEWS ========== */
@@ -461,7 +465,7 @@ contract PopLocker is ReentrancyGuard, Ownable {
     address _account,
     uint256 _amount,
     uint256 _spendRatio
-  ) external nonReentrant updateReward(_account) {
+  ) external nonReentrant {
     //pull tokens
     stakingToken.safeTransferFrom(msg.sender, address(this), _amount);
 
@@ -474,7 +478,7 @@ contract PopLocker is ReentrancyGuard, Ownable {
     address _account,
     uint256 _amount,
     uint256 _spendRatio
-  ) internal {
+  ) internal updateReward(_account) {
     require(_amount > 0, "Cannot stake 0");
     require(_spendRatio <= maximumBoostPayment, "over max spend");
     require(!isShutdown, "shutdown");
